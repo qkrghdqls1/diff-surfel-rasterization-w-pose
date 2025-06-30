@@ -37,7 +37,9 @@ namespace BACKWARD
 		const float* dL_dpixels,
 		const float* dL_depths,
 		float * dL_dtransMat,
+		float * dL_dtransMat_pose,
 		float3* dL_dmean2D,
+		float3* dL_dmean2D_pose,
 		float* dL_dnormal3D,
 		float* dL_dopacity,
 		float* dL_dcolors);
@@ -58,13 +60,17 @@ namespace BACKWARD
 		const float tan_fovx, const float tan_fovy,
 		const glm::vec3* campos,
 		float3* dL_dmean2D,
+		float3* dL_dmean2D_pose,
 		const float* dL_dnormal3D,
 		float* dL_dtransMat,
+		float* dL_dtransMat_pose,
 		float* dL_dcolor,
 		float* dL_dsh,
 		glm::vec3* dL_dmeans,
 		glm::vec2* dL_dscale,
-		glm::vec4* dL_drot);
+		glm::vec4* dL_drot,
+		glm::mat4* dL_dview,
+		glm::mat4* dL_dproj);
 }
 
 #endif

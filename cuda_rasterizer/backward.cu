@@ -158,7 +158,9 @@ renderCUDA(
 	const float* __restrict__ dL_dpixels,
 	const float* __restrict__ dL_depths,
 	float * __restrict__ dL_dtransMat,
+	float * __restrict__ dL_dtransMat_pose,
 	float3* __restrict__ dL_dmean2D,
+	float3* __restrict__ dL_dmean2D_pose,
 	float* __restrict__ dL_dnormal3D,
 	float* __restrict__ dL_dopacity,
 	float* __restrict__ dL_dcolors)
@@ -323,6 +325,8 @@ renderCUDA(
 			// gradients w.r.t. alpha (blending factor for a Gaussian/pixel
 			// pair).
 			float dL_dalpha = 0.0f;
+			float dL_dalpha_pose = 0.0f; // We only consider color gradient.
+
 			const int global_id = collected_id[j];
 			for (int ch = 0; ch < C; ch++)
 			{
@@ -333,6 +337,7 @@ renderCUDA(
 
 				const float dL_dchannel = dL_dpixel[ch];
 				dL_dalpha += (c - accum_rec[ch]) * dL_dchannel;
+				dL_dalpha_pose += (c - accum_rec[ch]) * dL_dchannel;
 				// Update the gradients w.r.t. color of the Gaussian. 
 				// Atomic, since this pixel is just one of potentially
 				// many that were affected by this Gaussian.
@@ -392,6 +397,7 @@ renderCUDA(
 
 			// Helpful reusable temporary variables
 			const float dL_dG = nor_o.w * dL_dalpha;
+			const float dL_dG_pose = nor_o.w * dL_dalpha_pose;
 #if RENDER_AXUTILITY
 			dL_dz += alpha * T * dL_ddepth; 
 #endif
@@ -402,20 +408,35 @@ renderCUDA(
 					dL_dG * -G * s.x + dL_dz * Tw.x,
 					dL_dG * -G * s.y + dL_dz * Tw.y
 				};
+				const float2 dL_ds_pose = {
+					dL_dG_pose * -G * s.x,
+					dL_dG_pose * -G * s.y
+				};
 				const float3 dz_dTw = {s.x, s.y, 1.0};
 				const float dsx_pz = dL_ds.x / p.z;
 				const float dsy_pz = dL_ds.y / p.z;
+				const float dsx_pz_pose = dL_ds_pose.x / p.z;
+				const float dsy_pz_pose = dL_ds_pose.y / p.z;
 				const float3 dL_dp = {dsx_pz, dsy_pz, -(dsx_pz * s.x + dsy_pz * s.y)};
+				const float3 dL_dp_pose = {dsx_pz_pose, dsy_pz_pose, -(dsx_pz_pose * s.x + dsy_pz_pose * s.y)};
 				const float3 dL_dk = cross(l, dL_dp);
+				const float3 dL_dk_pose = cross(l, dL_dp_pose);
 				const float3 dL_dl = cross(dL_dp, k);
+				const float3 dL_dl_pose = cross(dL_dp_pose, k);
 
 				const float3 dL_dTu = {-dL_dk.x, -dL_dk.y, -dL_dk.z};
+				const float3 dL_dTu_pose = {-dL_dk_pose.x, -dL_dk_pose.y, -dL_dk_pose.z};
 				const float3 dL_dTv = {-dL_dl.x, -dL_dl.y, -dL_dl.z};
+				const float3 dL_dTv_pose = {-dL_dl_pose.x, -dL_dl_pose.y, -dL_dl_pose.z};
 				const float3 dL_dTw = {
 					pixf.x * dL_dk.x + pixf.y * dL_dl.x + dL_dz * dz_dTw.x, 
 					pixf.x * dL_dk.y + pixf.y * dL_dl.y + dL_dz * dz_dTw.y, 
 					pixf.x * dL_dk.z + pixf.y * dL_dl.z + dL_dz * dz_dTw.z};
-
+				const float3 dL_dTw_pose = {
+					pixf.x * dL_dk_pose.x + pixf.y * dL_dl_pose.x,
+					pixf.x * dL_dk_pose.y + pixf.y * dL_dl_pose.y,
+					pixf.x * dL_dk_pose.z + pixf.y * dL_dl_pose.z
+				};
 
 				// Update gradients w.r.t. 3D covariance (3x3 matrix)
 				atomicAdd(&dL_dtransMat[global_id * 9 + 0],  dL_dTu.x);
@@ -427,12 +448,27 @@ renderCUDA(
 				atomicAdd(&dL_dtransMat[global_id * 9 + 6],  dL_dTw.x);
 				atomicAdd(&dL_dtransMat[global_id * 9 + 7],  dL_dTw.y);
 				atomicAdd(&dL_dtransMat[global_id * 9 + 8],  dL_dTw.z);
+
+				atomicAdd(&dL_dtransMat_pose[global_id * 9 + 0], dL_dTu_pose.x);
+				atomicAdd(&dL_dtransMat_pose[global_id * 9 + 1], dL_dTu_pose.y);
+				atomicAdd(&dL_dtransMat_pose[global_id * 9 + 2], dL_dTu_pose.z);
+				atomicAdd(&dL_dtransMat_pose[global_id * 9 + 3], dL_dTv_pose.x);
+				atomicAdd(&dL_dtransMat_pose[global_id * 9 + 4], dL_dTv_pose.y);
+				atomicAdd(&dL_dtransMat_pose[global_id * 9 + 5], dL_dTv_pose.z);
+				atomicAdd(&dL_dtransMat_pose[global_id * 9 + 6], dL_dTw_pose.x);
+				atomicAdd(&dL_dtransMat_pose[global_id * 9 + 7], dL_dTw_pose.y);
+				atomicAdd(&dL_dtransMat_pose[global_id * 9 + 8], dL_dTw_pose.z);
+
 			} else {
 				// // Update gradients w.r.t. center of Gaussian 2D mean position
 				const float dG_ddelx = -G * FilterInvSquare * d.x;
 				const float dG_ddely = -G * FilterInvSquare * d.y;
 				atomicAdd(&dL_dmean2D[global_id].x, dL_dG * dG_ddelx); // not scaled
 				atomicAdd(&dL_dmean2D[global_id].y, dL_dG * dG_ddely); // not scaled
+				
+				atomicAdd(&dL_dmean2D_pose[global_id].x, dL_dG_pose * dG_ddelx); // not scaled
+				atomicAdd(&dL_dmean2D_pose[global_id].y, dL_dG_pose * dG_ddely); // not scaled
+				
 				// // Propagate the gradients of depth
 				atomicAdd(&dL_dtransMat[global_id * 9 + 6],  s.x * dL_dz);
 				atomicAdd(&dL_dtransMat[global_id * 9 + 7],  s.y * dL_dz);
@@ -457,16 +493,20 @@ __device__ void compute_transmat_aabb(
 	const int W, const int H, 
 	const float3* dL_dnormals,
 	const float3* dL_dmean2Ds, 
+	const float3* dL_dmean2Ds_pose, 
 	float* dL_dTs, 
+	float* dL_dTs_pose, 
 	glm::vec3* dL_dmeans, 
 	glm::vec2* dL_dscales,
-	 glm::vec4* dL_drots)
+	glm::vec4* dL_drots,
+	glm::mat4* dL_dviews)
 {
 	glm::mat3 T;
 	float3 normal;
 	glm::mat3x4 P;
 	glm::mat3 R;
 	glm::mat3 S;
+	glm::mat3 L;
 	float3 p_orig;
 	glm::vec4 rot;
 	glm::vec2 scale;
@@ -486,7 +526,7 @@ __device__ void compute_transmat_aabb(
 		R = quat_to_rotmat(rot);
 		S = scale_to_mat(scale, 1.0f);
 		
-		glm::mat3 L = R * S;
+		L = R * S;
 		glm::mat3x4 M = glm::mat3x4(
 			glm::vec4(L[0], 0.0),
 			glm::vec4(L[1], 0.0),
@@ -517,7 +557,13 @@ __device__ void compute_transmat_aabb(
 		dL_dTs[idx*9+3], dL_dTs[idx*9+4], dL_dTs[idx*9+5],
 		dL_dTs[idx*9+6], dL_dTs[idx*9+7], dL_dTs[idx*9+8]
 	);
+	glm::mat3 dL_dT_pose = glm::mat3(
+		dL_dTs_pose[idx*9+0], dL_dTs_pose[idx*9+1], dL_dTs_pose[idx*9+2],
+		dL_dTs_pose[idx*9+3], dL_dTs_pose[idx*9+4], dL_dTs_pose[idx*9+5],
+		dL_dTs_pose[idx*9+6], dL_dTs_pose[idx*9+7], dL_dTs_pose[idx*9+8]
+	);
 	float3 dL_dmean2D = dL_dmean2Ds[idx];
+	float3 dL_dmean2D_pose = dL_dmean2Ds_pose[idx];
 	if(dL_dmean2D.x != 0 || dL_dmean2D.y != 0)
 	{
 		glm::vec3 t_vec = glm::vec3(9.0f, 9.0f, -1.0f);
@@ -547,12 +593,34 @@ __device__ void compute_transmat_aabb(
 			return;
 		}
 	}
+	if(dL_dmean2D_pose.x != 0 || dL_dmean2D_pose.y != 0){
+		glm::vec3 t_vec = glm::vec3(9.0f, 9.0f, -1.0f);
+		float d = glm::dot(t_vec, T[2] * T[2]);
+		glm::vec3 f_vec = t_vec * (1.0f / d);
+		glm::vec3 dL_dT0_pose = dL_dmean2D_pose.x * f_vec * T[2];
+		glm::vec3 dL_dT1_pose = dL_dmean2D_pose.y * f_vec * T[2];
+		glm::vec3 dL_dT3_pose = dL_dmean2D_pose.x * f_vec * T[0] + dL_dmean2D_pose.y * f_vec * T[1];
+		glm::vec3 dL_df_pose = dL_dmean2D_pose.x * T[0] * T[2] + dL_dmean2D_pose.y * T[1] * T[2];
+		float dL_dd_pose = glm::dot(dL_df_pose, f_vec) * (-1.0 / d);
+		glm::vec3 dd_dT3_pose = t_vec * T[2] * 2.0f;
+		dL_dT3_pose += dL_dd_pose * dd_dT3_pose;
+		dL_dT_pose[0] += dL_dT0_pose;
+		dL_dT_pose[1] += dL_dT1_pose;
+		dL_dT_pose[2] += dL_dT3_pose;
+	}
 	
 	if (Ts_precomp != nullptr) return;
 
 	// Update gradients w.r.t. scaling, rotation, position of the Gaussian
 	glm::mat3x4 dL_dM = P * glm::transpose(dL_dT);
 	float3 dL_dtn = transformVec4x3Transpose(dL_dnormals[idx], viewmatrix);
+	glm::mat3x4 dL_dM_aug_pose = P * glm::transpose(dL_dT_pose);
+
+	glm::mat3 dL_dM_pose = glm::mat3(
+		glm::vec3(dL_dM_aug_pose[0]),
+		glm::vec3(dL_dM_aug_pose[1]),
+		glm::vec3(dL_dM_aug_pose[2])
+	);
 #if DUAL_VISIABLE
 	float3 p_view = transformPoint4x3(p_orig, viewmatrix);
 	float cos = -sumf3(p_view * normal);
@@ -569,6 +637,16 @@ __device__ void compute_transmat_aabb(
 		dL_dRS[0] * glm::vec3(scale.x),
 		dL_dRS[1] * glm::vec3(scale.y),
 		dL_dRS[2]);
+
+	glm::vec3 p_world = glm::vec3(p_origs[idx].x, p_origs[idx].y, p_origs[idx].z);
+	glm::mat3 fake_RS = glm::mat3(L[0], L[1], p_world);
+	glm::mat3 dL_dW_pose = dL_dM_pose * glm::transpose(fake_RS);
+	glm::vec3 dL_dcam_pos_pose = dL_dM_pose[2];
+
+	dL_dviews[idx][0] = glm::vec4(dL_dW_pose[0], 0.0);
+	dL_dviews[idx][1] = glm::vec4(dL_dW_pose[1], 0.0);
+	dL_dviews[idx][2] = glm::vec4(dL_dW_pose[2], 0.0);
+	dL_dviews[idx][3] = glm::vec4(dL_dcam_pos_pose, 0.0);
 	
 	dL_drots[idx] = quat_to_rotmat_vjp(rot, dL_dR);
 	dL_dscales[idx] = glm::vec2(
@@ -598,13 +676,17 @@ __global__ void preprocessCUDA(
 	const glm::vec3* campos, 
 	// grad input
 	float* dL_dtransMats,
+	float* dL_dtransMats_pose,
 	const float* dL_dnormal3Ds,
 	float* dL_dcolors,
 	float* dL_dshs,
 	float3* dL_dmean2Ds,
+	float3* dL_dmean2Ds_pose,
 	glm::vec3* dL_dmean3Ds,
 	glm::vec2* dL_dscales,
-	glm::vec4* dL_drots)
+	glm::vec4* dL_drots,
+	glm::mat4* dL_dviews,
+	glm::mat4* dL_dprojs)
 {
 	auto idx = cg::this_grid().thread_rank();
 	if (idx >= P || !(radii[idx] > 0))
@@ -620,10 +702,13 @@ __global__ void preprocessCUDA(
 		projmatrix, viewmatrix, W, H, 
 		(float3*)dL_dnormal3Ds, 
 		dL_dmean2Ds,
+		dL_dmean2Ds_pose,
 		(dL_dtransMats), 
+		(dL_dtransMats_pose), 
 		dL_dmean3Ds, 
 		dL_dscales, 
-		dL_drots
+		dL_drots,
+		dL_dviews
 	);
 
 	if (shs)
@@ -652,13 +737,17 @@ void BACKWARD::preprocess(
 	const float tan_fovx, const float tan_fovy,
 	const glm::vec3* campos, 
 	float3* dL_dmean2Ds,
+	float3* dL_dmean2Ds_pose,
 	const float* dL_dnormal3Ds,
 	float* dL_dtransMats,
+	float* dL_dtransMats_pose,
 	float* dL_dcolors,
 	float* dL_dshs,
 	glm::vec3* dL_dmean3Ds,
 	glm::vec2* dL_dscales,
-	glm::vec4* dL_drots)
+	glm::vec4* dL_drots,
+	glm::mat4* dL_dviews,
+	glm::mat4* dL_dprojs)
 {	
 	preprocessCUDA<NUM_CHANNELS><< <(P + 255) / 256, 256 >> > (
 		P, D, M,
@@ -678,13 +767,17 @@ void BACKWARD::preprocess(
 		tan_fovy,
 		campos,	
 		dL_dtransMats,
+		dL_dtransMats_pose,
 		dL_dnormal3Ds,
 		dL_dcolors,
 		dL_dshs,
 		dL_dmean2Ds,
+		dL_dmean2Ds_pose,
 		dL_dmean3Ds,
 		dL_dscales,
-		dL_drots
+		dL_drots,
+		dL_dviews,
+		dL_dprojs
 	);
 }
 
@@ -705,7 +798,9 @@ void BACKWARD::render(
 	const float* dL_dpixels,
 	const float* dL_depths,
 	float * dL_dtransMat,
+	float * dL_dtransMat_pose,
 	float3* dL_dmean2D,
+	float3* dL_dmean2D_pose,
 	float* dL_dnormal3D,
 	float* dL_dopacity,
 	float* dL_dcolors)
@@ -726,7 +821,9 @@ void BACKWARD::render(
 		dL_dpixels,
 		dL_depths,
 		dL_dtransMat,
+		dL_dtransMat_pose,
 		dL_dmean2D,
+		dL_dmean2D_pose,
 		dL_dnormal3D,
 		dL_dopacity,
 		dL_dcolors

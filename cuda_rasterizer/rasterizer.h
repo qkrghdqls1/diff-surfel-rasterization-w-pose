@@ -75,14 +75,18 @@ namespace CudaRasterizer
 			const float* dL_dpix,
 			const float* dL_depths,
 			float* dL_dmean2D,
+			float* dL_dmean2D_pose,
 			float* dL_dnormal,
 			float* dL_dopacity,
 			float* dL_dcolor,
 			float* dL_dmean3D,
 			float* dL_dtransMat,
+			float* dL_dtransMat_pose,
 			float* dL_dsh,
 			float* dL_dscale,
 			float* dL_drot,
+			float* dL_dview,
+			float* dL_dproj,
 			bool debug);
 	};
 };
