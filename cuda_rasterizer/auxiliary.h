@@ -32,7 +32,7 @@
 #define DUAL_VISIABLE 1
 // #define NEAR_PLANE 0.2
 // #define FAR_PLANE 100.0
-#define DETACH_WEIGHT 0
+#define DETACH_WEIGHT 1
 
 __device__ const float near_n = 0.2;
 __device__ const float far_n = 100.0;
